@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Chat Classifier Test</title>
+  <style>
+    body { font-family: monospace; max-width: 800px; margin: 40px auto; padding: 0 20px; }
+    #log { background: #111; color: #0f0; padding: 16px; height: 400px;
+           overflow-y: auto; border-radius: 6px; white-space: pre-wrap; }
+    input { width: 70%; padding: 8px; font-size: 14px; }
+    button { padding: 8px 16px; cursor: pointer; }
+    .saturated { color: #f90; }
+  </style>
+</head>
+<body>
+  <h2>🧪 Chat Classifier</h2>
+  <div id="log">Connecting...\n</div>
+  <br>
+  <input id="msg" placeholder="Type a message..." onkeydown="if(event.key==='Enter') send()" />
+  <button onclick="send()">Send</button>
+  <button onclick="fetchQueue()">Queue Status</button>
+
+  <script>
+    const log  = document.getElementById("log");
+    const input = document.getElementById("msg");
+    const ws   = new WebSocket(`ws://${location.host}/ws/chat`);
+
+    ws.onopen  = () => append("✅ Connected\n");
+    ws.onclose = () => append("❌ Disconnected\n");
+
+    ws.onmessage = ({ data }) => {
+      const r = JSON.parse(data);
+      let out = `\n─── [${r.message_id}] ───────────────────────\n`;
+      out += `  bucket  : ${r.bucket_label}\n`;
+      out += `  source  : ${r.source}\n`;
+      out += `  depth   : ${r.queue_depth}\n`;
+      if (r.saturated) {
+        out += `  ⚠️  SATURATED — alternatives:\n`;
+        r.alternatives.forEach(a => {
+          out += `     • ${a.centroid} (${a.size} msgs)\n`;
+        });
+      }
+      append(out);
+    };
+
+    function send() {
+      const content = input.value.trim();
+      if (!content) return;
+      ws.send(JSON.stringify({ content }));
+      append(`\n> ${content}`);
+      input.value = "";
+    }
+
+    async function fetchQueue() {
+      const res  = await fetch("/queue");
+      const data = await res.json();
+      append("\n📊 Queue:\n" + JSON.stringify(data, null, 2));
+    }
+
+    function append(text) {
+      log.textContent += text + "\n";
+      log.scrollTop = log.scrollHeight;
+    }
+  </script>
+</body>
+</html>
