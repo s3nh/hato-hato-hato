@@ -2,58 +2,34 @@ import uuid
 import asyncio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
 
-from classifier import classify_message
-from bucket_manager import BucketManager
+from hybrid_classifier import process_message, fuzzy
 
 app = FastAPI()
-manager = BucketManager()
-
-class ChatMessage(BaseModel):
-    content: str
-    guest_id: str
-    timestamp: str          # ISO-8601
 
 @app.websocket("/ws/chat")
 async def chat_endpoint(websocket: WebSocket):
     await websocket.accept()
+    print("Client connected")
     try:
         while True:
-            raw = await websocket.receive_json()
-            msg = ChatMessage(**raw)
+            data = await websocket.receive_json()
+            content    = data.get("content", "")
+            message_id = str(uuid.uuid4())[:8]
 
-            # 1. Classify in a thread so we don't block the event loop
-            topic, confidence = await asyncio.to_thread(
-                classify_message, msg.content
-            )
+            # run sync code in a thread — doesn't block the event loop
+            result = await asyncio.to_thread(process_message, message_id, content)
 
-            # 2. Update bucket + check saturation
-            message_id = str(uuid.uuid4())
-            status = manager.add_message(topic, message_id)
-
-            # 3. Build response
-            response = {
-                "message_id": message_id,
-                "classified_topic": topic,
-                "confidence": round(confidence, 3),
-                "queue_depth": status.count,
-                "saturated": status.is_saturated,
-            }
-
-            if status.is_saturated:
-                response["suggestion"] = {
-                    "message": f"We have many questions about '{topic}' already. "
-                               f"Consider asking about one of these instead:",
-                    "alternatives": status.suggested_topics,
-                }
-
-            await websocket.send_json(response)
+            await websocket.send_json(result)
 
     except WebSocketDisconnect:
-        pass
+        print("Client disconnected")
 
-# Optional REST endpoint to see live bucket state
-@app.get("/queue/status")
+@app.get("/queue")
 def queue_status():
-    return manager.get_all_counts()
+    return fuzzy.queue_status()
+
+@app.get("/")
+def index():
+    with open("test_client.html") as f:
+        return HTMLResponse(f.read())
